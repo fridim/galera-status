@@ -1,0 +1,130 @@
+#!/bin/bash
+AUTHOR="Guillaume Coré <guillaume.core@enovance.com>"
+VERSION=0.1
+PROGNAME="galera-status"
+
+
+colors() {
+  escape="\033";
+
+  black_f="${escape}[30m"; red_f="${escape}[31m"; green_f="${escape}[32m";
+  yellow_f="${escape}[33m"; blue_f="${escape}[34m"; purple_f="${escape}[35m";
+  cyan_f="${escape}[36m"; white_f="${escape}[37m"; gray_f="${escape}[30m";
+
+  black_b="${escape}[40m"; red_b="${escape}[41m"; green_b="${escape}[42m";
+  yellow_b="${escape}[43m"; blue_b="${escape}[44m"; purple_b="${escape}[45m";
+  cyan_b="${escape}[46m"; white_b="${escape}[47m";
+
+  bold_on="${escape}[1m"; bold_off="${escape}[22m";
+  italic_on="${escape}[3m"; italics_off="${escape}[23m";
+  underline_on="${escape}[4m"; underline_off="${escape}[24m";
+  blink_on="${escape}[5m"; blink_off="${escape}[25m";
+  invert_on="${escape}[7m"; invert_off="${escape}[27m";
+
+  reset_c="${escape}[0m";
+} 
+
+print_help() {
+  cat <<- EOT
+         FILE: $PROGNAME
+  
+        USAGE: $PROGNAME [--help] [--batch] [MySQL options]
+
+      OPTIONS: --help        this help
+               --batch       all WSREP variables (output not formatted, no colors)
+
+               By default mysql will use config files, see 'mysql --help' and 
+               http://dev.mysql.com/doc/refman/5.5/en/option-files.html
+  
+  DESCRIPTION: $PROGNAME shows status and health of a Galera cluster.
+  
+  
+      VERSION: $VERSION
+       AUTHOR: $AUTHOR
+      COMPANY: eNovance
+EOT
+  exit 0 
+}
+
+if [[ $1 == '-h' || $1 == '--help' || $1 == 'help' ]]; then
+  print_help
+  exit 0
+fi
+
+if [[ $1 == '--batch' ]]; then
+  mysql "$@" -N -B -e "SHOW STATUS LIKE 'wsrep_%';"
+  exit 0
+fi
+
+colors
+
+while read line; do
+  varname=$(echo "$line" | cut -f 1)
+  varname=${varname/wsrep_}
+  value=$(echo "$line" | cut -f 2|sed "s/'//g")
+  eval "$varname='$value'"
+done < <(mysql "$@" -N -B -e "SHOW STATUS LIKE 'wsrep_%';")
+
+###############
+# Based on :
+# http://www.codership.com/wiki/doku.php?id=monitoring 
+if [[ $cluster_status == 'Primary' ]]; then
+  cluster_status="${bold_on}${green_f}$cluster_status${reset_c}"
+else
+  cluster_status="${bold_on}${red_f}$cluster_status${reset_c}"
+fi
+
+if [[ $ready == 'ON' ]]; then
+  ready="${bold_on}${green_f}$ready${reset_c}"
+else
+  ready="${bold_on}${red_f}$ready${reset_c}"
+fi
+
+if [[ $connected == 'ON' ]]; then
+  connected="${bold_on}${green_f}$connected${reset_c}"
+else
+  connected="${bold_on}${red_f}$connected${reset_c}"
+fi
+
+case "$local_state_comment" in
+  Joining)
+    local_state_comment="${bold_on}${yellow_f}$local_state_comment${reset_c}" ;;
+  Waiting\ for\ SST)
+    local_state_comment="${bold_on}${yellow_f}$local_state_comment${reset_c}" ;;
+  Joined)
+    local_state_comment="${bold_on}${yellow_f}$local_state_comment${reset_c}" ;;
+  Donor)
+    local_state_comment="${bold_on}${yellow_f}$local_state_comment${reset_c}" ;;
+  Synced)
+    local_state_comment="${bold_on}${green_f}$local_state_comment${reset_c}" ;;
+  *)
+    local_state_comment="${bold_on}${red_f}$local_state_comment${reset_c}" ;;
+esac
+
+if [[ $flow_control_paused > '0.1' ]]; then
+  flow_control_paused="${bold_on}${red_f}$flow_control_paused${reset_c}"
+fi 
+
+echo -e "
+                    ${gray_f}${bold_on}NODE STATUS${reset_c}
+
+           cluster status:   $cluster_status
+             cluster size:   $cluster_size
+                    Ready:   $ready
+                connected:   $connected
+            state comment:   $local_state_comment
+${gray_f}--------------------------------------------------------
+  ${bold_on}REPLICATION HEALTH${bold_off} (The lower the better)${reset_c}
+
+     fraction replication pause:   $flow_control_paused
+              flow control sent:   $flow_control_sent
+       local send queue average:   $local_send_queue_avg
+    local receive queue average:   $local_recv_queue_avg
+${gray_f}--------------------------------------------------------
+  ${bold_on}CLUSTER INTEGRITY${bold_off} ${gray_f}(should be the same on all nodes)${reset_c}
+
+    local state UUID:   $local_state_uuid
+     cluster conf ID:   $cluster_conf_id
+"
+
+exit 0
